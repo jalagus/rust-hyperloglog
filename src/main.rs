@@ -3,11 +3,7 @@ use rand::Rng;
 
 fn naive_cardinality(items: &Vec<String>) -> usize {
     let mut unique_items = std::collections::HashSet::new();
-
-    for item in items.iter() {
-        unique_items.insert(item);
-    }
-
+    unique_items.extend(items);
     unique_items.len()
 }
 
@@ -24,12 +20,12 @@ fn hash(x: &String) -> u32 {
     hash
 }
 
-fn p(s: u32) -> u32 {
+fn rho(s: u32) -> u32 {
     s.leading_zeros() + 1
 }
 
 fn hyperloglog(items: &Vec<String>, b: usize) -> f64 {
-    let m: usize = 2 << (b - 1);
+    let m: usize = 1 << b;
     let am: f64 = 0.7213 / (1.0 + (1.079 / (m as f64)));
     let mut memory: Vec<u32> = vec![0; m];
 
@@ -40,7 +36,7 @@ fn hyperloglog(items: &Vec<String>, b: usize) -> f64 {
         let j = (h >> (32 - b)) as usize;
         let w = h & mask;
 
-        memory[j] = std::cmp::max(memory[j], p(w));
+        memory[j] = std::cmp::max(memory[j], rho(w));
     }
 
     let z = memory.into_iter().map(|x| (2.0_f64).powf(-(x as f64)))
@@ -53,7 +49,7 @@ fn hyperloglog(items: &Vec<String>, b: usize) -> f64 {
 fn generate_test_data(n: u32) -> Vec<String> {
     let mut data: Vec<String> = Vec::new();
     let contents = std::fs::read_to_string("words.txt")
-        .expect("Should have been able to read the file");
+        .expect("File reading failed.");
     let words:Vec<&str> = contents.split_whitespace().collect();
 
     let mut rng = rand::thread_rng();
@@ -65,10 +61,14 @@ fn generate_test_data(n: u32) -> Vec<String> {
 }
 
 fn main() {
-    let test_data =  generate_test_data(100000);
+    for iter in 1..11 {
+        let test_data =  generate_test_data(5000 * iter);
+        for b in [2, 4, 8] {
+            let cardinality = naive_cardinality(&test_data);    
+            let approx_cardinality = hyperloglog(&test_data, b);    
 
-    let cardinality = naive_cardinality(&test_data);    
-    let approx_cardinality = hyperloglog(&test_data, 4);    
-
-    println!("Real cardinality: {cardinality} Approx. cardinality: {approx_cardinality}");
+            println!("b = {b} :: True cardinality: {cardinality} Approx. cardinality: {approx_cardinality}");
+        }
+        println!("-------");
+    }
 }
