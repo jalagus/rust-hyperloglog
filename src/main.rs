@@ -1,10 +1,14 @@
-use rand::Rng;
+use rand::{Rng, SeedableRng};
 
 mod cardinality_estimation {
     pub fn naive_cardinality(items: &Vec<String>) -> usize {
         let mut unique_items = std::collections::HashSet::new();
         unique_items.extend(items);
         unique_items.len()
+    }
+
+    fn rho(s: u32) -> u32 {
+        s.leading_zeros() + 1
     }
 
     fn hash(x: &String) -> u32 {
@@ -18,44 +22,58 @@ mod cardinality_estimation {
         }
     
         hash
-    }    
-
-    fn rho(s: u32) -> u32 {
-        s.leading_zeros() + 1
     }
 
-    pub fn hyperloglog(items: &Vec<String>, b: u32) -> f64 {
+    fn fill_buckets(items: &Vec<String>, b: u32) -> Vec<u32> {
         let m: usize = 1 << b;
-        let am: f64 = 0.7213 / (1.0 + (1.079 / (m as f64)));
-        let mut memory: Vec<u32> = vec![0; m];
-    
-        let mask = (2 << (31 - b)) - 1;
-    
+        let mut bucket: Vec<u32> = vec![0; m];
+            
         for item in items.iter() {
             let h = hash(item);
             let j = (h >> (32 - b)) as usize;
-            let w = h & mask;
-    
-            memory[j] = std::cmp::max(memory[j], rho(w));
+            let w = h << b;
+
+            bucket[j] = std::cmp::max(bucket[j], rho(w));
         }
+
+        bucket
+    }
+
+    pub fn loglog(items: &Vec<String>, b: u32) -> f64 {
+        let m: usize = 1 << b;
+        let bucket: Vec<u32> = fill_buckets(items, b);
+        let alpha = 0.697;
+
+        let k = bucket.into_iter().reduce(|a, b| a + b).expect("Could not sum.") as f64;
+        let multiplier = m as f64;
     
-        let z = memory.into_iter()
+        multiplier * alpha * (2.0_f64).powf(k / multiplier)
+    }    
+
+    pub fn hyperloglog(items: &Vec<String>, b: u32) -> f64 {
+        let m: usize = 1 << b;
+        let bucket: Vec<u32> = fill_buckets(items, b);
+        let alpha: f64 = 0.7213 / (1.0 + (1.079 / (m as f64)));
+
+        let z = bucket.into_iter()
             .map(|x| (2.0_f64).powf(-(x as f64))).into_iter()
             .reduce(|x, y| x + y)
             .expect("Calculation failed.");
         
-        (am * ((m * m) as f64)) / z
-    }    
+        (alpha * ((m * m) as f64)) / z
+    }  
+  
 }
 
 
-fn generate_test_data(n: u32) -> Vec<String> {
+fn generate_test_data(n: u32, seed: u64) -> Vec<String> {
     let mut data: Vec<String> = Vec::new();
     let contents = std::fs::read_to_string("words.txt")
         .expect("File reading failed.");
     let words:Vec<&str> = contents.split_whitespace().collect();
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(seed);
+
     for _ in 0..n {
         data.push(words[rng.gen_range(0..words.len())].to_string());
     }
@@ -64,13 +82,14 @@ fn generate_test_data(n: u32) -> Vec<String> {
 }
 
 fn main() {
-    for iter in 1..11 {
-        let test_data =  generate_test_data(5000 * iter);
-        for b in [2, 4, 8] {
+    for iter in 1..2 {
+        let test_data =  generate_test_data(5000 * iter, 42);
+        for b in [8] {
             let cardinality = cardinality_estimation::naive_cardinality(&test_data);    
-            let approx_cardinality = cardinality_estimation::hyperloglog(&test_data, b);    
+            let ll_approx_cardinality = cardinality_estimation::loglog(&test_data, b);    
+            let hll_approx_cardinality = cardinality_estimation::hyperloglog(&test_data, b);    
 
-            println!("b = {b} :: True cardinality: {cardinality} Approx. cardinality: {approx_cardinality}");
+            println!("b = {b} :: True: {cardinality} LL: {ll_approx_cardinality:.2} HLL: {hll_approx_cardinality:.2}");
         }
         println!("-------");
     }
