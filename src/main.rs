@@ -51,16 +51,41 @@ mod cardinality_estimation {
     }    
 
     pub fn hyperloglog(items: &Vec<String>, b: u32) -> f64 {
+        if (b < 4) || (b > 16) {
+            panic!("Bit count must be within [4, 16]. Was '{b}'");
+        }
+
         let m: usize = 1 << b;
         let bucket: Vec<u32> = fill_buckets(items, b);
-        let alpha: f64 = 0.7213 / (1.0 + (1.079 / (m as f64)));
+        let alpha = match m {
+            16 => 0.678,
+            32 => 0.697,
+            64 => 0.709,
+            other => 0.7213 / (1.0 + (1.079 / (other as f64)))
+        };
 
-        let z = bucket.into_iter()
-            .map(|x| (2.0_f64).powf(-(x as f64))).into_iter()
+        let z = bucket.iter()
+            .map(|x| (2.0_f64).powf(-(*x as f64))).into_iter()
             .reduce(|x, y| x + y)
             .expect("Calculation failed.");
         
-        (alpha * ((m * m) as f64)) / z
+        let multiplier = m as f64;
+        let e = (alpha * multiplier * multiplier) / z;
+        const COEF: f64 = (1_u64 << 32) as f64;
+
+        if e < ((5.0/2.0) * multiplier) {
+            let non_empty_buckets = bucket.iter().fold(0, 
+                |a, b| if *b > 0 {a + 1} else {a}
+            );
+            if non_empty_buckets > 0 {
+                return multiplier * (multiplier / non_empty_buckets as f64).ln();
+            }
+            return e;
+        } else if e <= COEF / 30.0 {
+            return e;
+        } else {
+            return -COEF * (1.0 - e / COEF);
+        }
     }  
   
 }
@@ -82,9 +107,9 @@ fn generate_test_data(n: u32, seed: u64) -> Vec<String> {
 }
 
 fn main() {
-    for iter in 1..2 {
-        let test_data =  generate_test_data(5000 * iter, 42);
-        for b in [8] {
+    for iter in 1..6 {
+        let test_data =  generate_test_data(10 * 10_u32.pow(iter), 42);
+        for b in [4, 5, 6, 7, 8] {
             let cardinality = cardinality_estimation::naive_cardinality(&test_data);    
             let ll_approx_cardinality = cardinality_estimation::loglog(&test_data, b);    
             let hll_approx_cardinality = cardinality_estimation::hyperloglog(&test_data, b);    
